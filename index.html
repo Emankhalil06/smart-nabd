@@ -625,6 +625,20 @@ body.auth-locked{overflow:hidden}
   }
 </style>
 
+
+<style>
+.auth-extra{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:8px 0 14px;font-size:13px}
+.auth-remember{display:flex;align-items:center;gap:7px;cursor:pointer}
+.auth-remember input{accent-color:#0ea5a8}
+.auth-link{border:0;background:none;color:#0b8f93;cursor:pointer;padding:0;font:inherit;text-decoration:underline}
+.auth-secondary{margin:12px 0 0;text-align:center;font-size:13px;color:#64748b}
+.auth-account-tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.auth-tool-btn{border:1px solid #dbe4ea;background:#fff;border-radius:10px;padding:8px 12px;cursor:pointer}
+.auth-modal{position:fixed;inset:0;background:rgba(15,23,42,.48);display:none;align-items:center;justify-content:center;z-index:9999;padding:18px}
+.auth-modal.active{display:flex}.auth-modal-card{width:min(460px,100%);background:#fff;border-radius:20px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.auth-modal-card h3{margin-top:0}.auth-modal-card .field{margin:12px 0}
+.auth-status{margin-top:10px;font-size:13px;color:#0f766e}
+</style>
 </head>
 <body>
 
@@ -639,14 +653,29 @@ body.auth-locked{overflow:hidden}
     <form class="auth-form" id="authForm" onsubmit="submitAuth(event)">
       <div class="field"><label for="authEmail" id="authEmailLabel">البريد الإلكتروني</label><input id="authEmail" type="email" autocomplete="email" required placeholder="name@example.com"></div>
       <div class="field"><label for="authPassword" id="authPasswordLabel">كلمة المرور</label><input id="authPassword" type="password" autocomplete="current-password" minlength="8" required placeholder="8 أحرف على الأقل"></div>
+      <div class="auth-extra" id="loginExtras">
+        <label class="auth-remember"><input id="rememberMe" type="checkbox" checked> <span>تذكرني</span></label>
+        <button class="auth-link" type="button" onclick="openForgotPassword()">نسيت كلمة المرور؟</button>
+      </div>
       <div class="auth-error" id="authError"></div>
       <button class="primary auth-submit" id="authSubmit" type="submit">تسجيل الدخول</button>
+      <div class="auth-secondary" id="verifyActions" style="display:none">لم يصلك البريد؟ <button class="auth-link" type="button" onclick="resendVerification()">إعادة إرسال رسالة التأكيد</button></div>
     </form>
     <p class="auth-note" id="authNote">حسابك يحمي الوصول إلى ميزات الذكاء الاصطناعي. لا يتم تخزين مفتاح Gemini في المتصفح.</p>
   </div>
 </div>
 
 
+
+<div class="auth-modal" id="forgotModal" onclick="if(event.target.id==='forgotModal') closeAuthModal('forgotModal')">
+  <div class="auth-modal-card"><h3>نسيت كلمة المرور؟</h3><p>أدخلي بريدك الإلكتروني وسنرسل رابطًا لإعادة تعيين كلمة المرور.</p><form onsubmit="submitForgot(event)"><div class="field"><label>البريد الإلكتروني</label><input id="forgotEmail" type="email" autocomplete="email" required></div><div class="auth-error" id="forgotError"></div><button class="primary" type="submit">إرسال رابط الاستعادة</button></form></div>
+</div>
+<div class="auth-modal" id="resetModal" onclick="if(event.target.id==='resetModal') closeAuthModal('resetModal')">
+  <div class="auth-modal-card"><h3>تعيين كلمة مرور جديدة</h3><form onsubmit="submitReset(event)"><div class="field"><label>كلمة المرور الجديدة</label><input id="resetPassword" type="password" minlength="8" required autocomplete="new-password"></div><div class="field"><label>تأكيد كلمة المرور</label><input id="resetPassword2" type="password" minlength="8" required autocomplete="new-password"></div><div class="auth-error" id="resetError"></div><button class="primary" type="submit">حفظ كلمة المرور</button></form></div>
+</div>
+<div class="auth-modal" id="changePasswordModal" onclick="if(event.target.id==='changePasswordModal') closeAuthModal('changePasswordModal')">
+  <div class="auth-modal-card"><h3>تغيير كلمة المرور</h3><form onsubmit="submitChangePassword(event)"><div class="field"><label>كلمة المرور الحالية</label><input id="currentPassword" type="password" required autocomplete="current-password"></div><div class="field"><label>كلمة المرور الجديدة</label><input id="newPassword" type="password" minlength="8" required autocomplete="new-password"></div><div class="field"><label>تأكيد كلمة المرور الجديدة</label><input id="newPassword2" type="password" minlength="8" required autocomplete="new-password"></div><div class="auth-error" id="changePasswordError"></div><button class="primary" type="submit">تغيير كلمة المرور</button></form></div>
+</div>
 <aside class="nabd-sidebar" aria-label="القائمة الرئيسية">
   <div class="sidebar-brand">
     <div class="sidebar-logo">💓</div>
@@ -678,6 +707,7 @@ body.auth-locked{overflow:hidden}
       </div>
     </div>
     <div class="account-summary" id="accountSummary">سجّل الدخول للبدء</div>
+    <div class="auth-account-tools"><button class="auth-tool-btn" type="button" onclick="openChangePassword()">تغيير كلمة المرور</button></div>
     <button class="logout-btn" id="logoutBtn" onclick="logoutAccount()">تسجيل الخروج</button>
   </div>
 </aside>
@@ -1931,82 +1961,32 @@ window.openRole = function(role){
    ========================= */
 let authMode='login';
 let currentAccount=null;
+let pendingResetToken=new URLSearchParams(window.location.search).get('reset')||'';
 
-function showAuthError(message){
-  const box=document.getElementById('authError');
-  box.textContent=message||'';
-  box.classList.toggle('show',Boolean(message));
-}
-function setAuthLoading(loading){
-  const btn=document.getElementById('authSubmit');
-  btn.disabled=loading;
-  btn.textContent=loading ? (english?'Please wait...':'⏳ يرجى الانتظار...') : (authMode==='login' ? (english?'Log in':'تسجيل الدخول') : (english?'Create account':'إنشاء حساب'));
-}
-function showAuthMode(mode){
-  authMode=mode;
-  document.getElementById('loginTab').classList.toggle('active',mode==='login');
-  document.getElementById('registerTab').classList.toggle('active',mode==='register');
-  document.getElementById('authPassword').setAttribute('autocomplete',mode==='login'?'current-password':'new-password');
-  document.getElementById('authSubmit').textContent=mode==='login' ? (english?'Log in':'تسجيل الدخول') : (english?'Create account':'إنشاء حساب');
-  showAuthError('');
-}
-function updateUsage(usage){
-  if(!usage) return;
-  const text=english ? `AI today: ${usage.used}/${usage.limit}` : `AI اليوم: ${usage.used}/${usage.limit}`;
-  const badge=document.getElementById('usageBadge'); if(badge) badge.textContent=text;
-  const summary=document.getElementById('accountSummary'); if(summary) summary.textContent=english ? `Daily AI usage: ${usage.used}/${usage.limit}` : `استخدام AI اليومي: ${usage.used}/${usage.limit}`;
-}
-function updateAccountUI(){
-  const bar=document.getElementById('accountBar');
-  const email=document.getElementById('accountEmail');
-  const plan=document.getElementById('planBadge');
-  if(!currentAccount){ bar.classList.add('hidden'); return; }
-  bar.classList.remove('hidden'); bar.style.display='flex';
-  email.textContent=currentAccount.email;
-  plan.textContent=currentAccount.plan==='premium' ? (english?'Premium':'Premium') : (english?'Free':'مجاني');
-  document.getElementById('accountSummary').textContent=english?'Signed in':'تم تسجيل الدخول';
-}
-function lockApp(){
-  document.body.classList.add('auth-locked');
-  document.getElementById('authOverlay').style.display='flex';
-  updateAccountUI();
-}
-function unlockApp(user,usage){
-  currentAccount=user; updateAccountUI(); updateUsage(usage);
-  document.body.classList.remove('auth-locked');
-  document.getElementById('authOverlay').style.display='none';
-}
-async function authRequest(url,body){
-  const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});
-  const payload=await response.json().catch(()=>({}));
-  if(!response.ok) throw new Error(payload.error||'تعذر تنفيذ العملية.');
-  return payload;
-}
-async function submitAuth(event){
-  event.preventDefault(); showAuthError(''); setAuthLoading(true);
-  try{
-    const email=document.getElementById('authEmail').value.trim();
-    const password=document.getElementById('authPassword').value;
-    const payload=await authRequest(authMode==='login'?'/api/auth/login':'/api/auth/register',{email,password});
-    unlockApp(payload.user,payload.usage);
-  }catch(error){ showAuthError(error.message); }
-  finally{ setAuthLoading(false); }
-}
-async function logoutAccount(){
-  try{await authRequest('/api/auth/logout',{});}catch(_){ }
-  currentAccount=null; lockApp(); document.getElementById('authPassword').value='';
-}
+function showAuthError(message){const box=document.getElementById('authError');box.textContent=message||'';box.classList.toggle('show',Boolean(message));}
+function setAuthLoading(loading){const btn=document.getElementById('authSubmit');btn.disabled=loading;btn.textContent=loading?'⏳ يرجى الانتظار...':(authMode==='login'?'تسجيل الدخول':'إنشاء حساب');}
+function showAuthMode(mode){authMode=mode;document.getElementById('loginTab').classList.toggle('active',mode==='login');document.getElementById('registerTab').classList.toggle('active',mode==='register');document.getElementById('authPassword').setAttribute('autocomplete',mode==='login'?'current-password':'new-password');document.getElementById('loginExtras').style.display=mode==='login'?'flex':'none';document.getElementById('authSubmit').textContent=mode==='login'?'تسجيل الدخول':'إنشاء حساب';showAuthError('');}
+function updateUsage(usage){if(!usage)return;const text=`AI اليوم: ${usage.used}/${usage.limit}`;const badge=document.getElementById('usageBadge');if(badge)badge.textContent=text;const summary=document.getElementById('accountSummary');if(summary)summary.textContent=`استخدام AI اليومي: ${usage.used}/${usage.limit}`;}
+function updateAccountUI(){const bar=document.getElementById('accountBar');const email=document.getElementById('accountEmail');const plan=document.getElementById('planBadge');if(!currentAccount){bar.classList.add('hidden');return;}bar.classList.remove('hidden');bar.style.display='flex';email.textContent=currentAccount.email;plan.textContent=currentAccount.plan==='premium'?'Premium':'مجاني';document.getElementById('accountSummary').textContent='تم تسجيل الدخول';}
+function lockApp(){document.body.classList.add('auth-locked');document.getElementById('authOverlay').style.display='flex';updateAccountUI();}
+function unlockApp(user,usage){currentAccount=user;updateAccountUI();updateUsage(usage);document.body.classList.remove('auth-locked');document.getElementById('authOverlay').style.display='none';}
+async function authRequest(url,body,method='POST'){const response=await fetch(url,{method,headers:method==='POST'?{'Content-Type':'application/json'}:undefined,credentials:'same-origin',body:method==='POST'?JSON.stringify(body):undefined});const payload=await response.json().catch(()=>({}));if(!response.ok)throw Object.assign(new Error(payload.error||'تعذر تنفيذ العملية.'),{code:payload.code});return payload;}
+async function submitAuth(event){event.preventDefault();showAuthError('');setAuthLoading(true);try{const email=document.getElementById('authEmail').value.trim();const password=document.getElementById('authPassword').value;const rememberMe=document.getElementById('rememberMe')?.checked!==false;const payload=await authRequest(authMode==='login'?'/api/auth/login':'/api/auth/register',{email,password,rememberMe});if(payload.emailVerificationRequired){showAuthError('تم إنشاء الحساب. افحص بريدك الإلكتروني لتأكيد الحساب قبل استخدامه.');document.getElementById('verifyActions').style.display='block';return;}unlockApp(payload.user,payload.usage);}catch(error){showAuthError(error.message);if(error.code==='EMAIL_NOT_VERIFIED')document.getElementById('verifyActions').style.display='block';}finally{setAuthLoading(false);}}
+async function resendVerification(){const email=document.getElementById('authEmail').value.trim();try{const p=await authRequest('/api/auth/resend-verification',{email});showAuthError(p.message);}catch(e){showAuthError(e.message);}}
+function openForgotPassword(){document.getElementById('forgotEmail').value=document.getElementById('authEmail').value.trim();document.getElementById('forgotError').textContent='';document.getElementById('forgotModal').classList.add('active');}
+function closeAuthModal(id){document.getElementById(id)?.classList.remove('active');}
+async function submitForgot(event){event.preventDefault();const email=document.getElementById('forgotEmail').value.trim();const box=document.getElementById('forgotError');try{const p=await authRequest('/api/auth/forgot-password',{email});box.textContent=p.message;}catch(e){box.textContent=e.message;}}
+async function submitReset(event){event.preventDefault();const p1=document.getElementById('resetPassword').value;const p2=document.getElementById('resetPassword2').value;const box=document.getElementById('resetError');if(p1!==p2){box.textContent='كلمتا المرور غير متطابقتين.';return;}try{const p=await authRequest('/api/auth/reset-password',{token:pendingResetToken,newPassword:p1});closeAuthModal('resetModal');window.history.replaceState({},'',window.location.pathname);unlockApp(p.user,p.usage);alert('تم تغيير كلمة المرور بنجاح.');}catch(e){box.textContent=e.message;}}
+function openChangePassword(){document.getElementById('changePasswordModal').classList.add('active');}
+async function submitChangePassword(event){event.preventDefault();const p1=document.getElementById('newPassword').value;const p2=document.getElementById('newPassword2').value;const box=document.getElementById('changePasswordError');if(p1!==p2){box.textContent='كلمتا المرور غير متطابقتين.';return;}try{const p=await authRequest('/api/auth/change-password',{currentPassword:document.getElementById('currentPassword').value,newPassword:p1});box.textContent=p.message;setTimeout(()=>closeAuthModal('changePasswordModal'),700);}catch(e){box.textContent=e.message;}}
+async function logoutAccount(){try{await authRequest('/api/auth/logout',{});}catch(_){ }currentAccount=null;lockApp();document.getElementById('authPassword').value='';}
 async function initAuth(){
-  try{
-    const response=await fetch('/api/auth/me',{credentials:'same-origin'});
-    const payload=await response.json().catch(()=>({}));
-    if(response.ok) unlockApp(payload.user,payload.usage);
-    else lockApp();
-  }catch(_){
-    lockApp();
-    showAuthError(english?'Could not reach the authentication server.':'تعذر الاتصال بخادم الحسابات.');
-  }
+  if(pendingResetToken){document.getElementById('authOverlay').style.display='none';document.getElementById('resetModal').classList.add('active');return;}
+  const verifyToken=new URLSearchParams(window.location.search).get('verify');
+  if(verifyToken){try{const p=await authRequest('/api/auth/verify-email',{},'GET');showAuthError(p.message);}catch(e){showAuthError(e.message);}window.history.replaceState({},'',window.location.pathname);}
+  try{const response=await fetch('/api/auth/me',{credentials:'same-origin'});const payload=await response.json().catch(()=>({}));if(response.ok)unlockApp(payload.user,payload.usage);else lockApp();}catch(_){lockApp();showAuthError('تعذر الاتصال بخادم الحسابات.');}
 }
+
 
 /* =========================
    Full Arabic/English UI language layer

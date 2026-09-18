@@ -8,6 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
 const { Pool } = require('pg');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -22,6 +23,17 @@ const MAX_BODY_BYTES = 256 * 1024;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT = Number(process.env.RATE_LIMIT_PER_MINUTE || 20);
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 30);
+const SESSION_DAYS_REMEMBER = Number(process.env.SESSION_DAYS_REMEMBER || 30);
+const SESSION_DAYS_NORMAL = Number(process.env.SESSION_DAYS_NORMAL || 1);
+const PASSWORD_RESET_MINUTES = Number(process.env.PASSWORD_RESET_MINUTES || 30);
+const EMAIL_VERIFY_HOURS = Number(process.env.EMAIL_VERIFY_HOURS || 24);
+const APP_BASE_URL = (process.env.APP_BASE_URL || '').replace(/\/$/, '');
+const SMTP_HOST = process.env.SMTP_HOST || '';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const MAIL_FROM = process.env.MAIL_FROM || SMTP_USER || 'smartnabd.support@gmail.com';
+const mailer = SMTP_HOST && SMTP_USER && SMTP_PASS ? nodemailer.createTransport({host: SMTP_HOST, port: SMTP_PORT, secure: SMTP_PORT === 465, auth: {user: SMTP_USER, pass: SMTP_PASS}}) : null;
 const FREE_DAILY_LIMIT = Number(process.env.FREE_DAILY_LIMIT || 10);
 const PREMIUM_DAILY_LIMIT = Number(process.env.PREMIUM_DAILY_LIMIT || 100);
 const DATABASE_URL = process.env.DATABASE_URL || '';
@@ -168,8 +180,20 @@ async function initDatabase() {
       email VARCHAR(254) UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       plan VARCHAR(20) NOT NULL DEFAULT 'free' CHECK (plan IN ('free','premium')),
+      email_verified BOOLEAN NOT NULL DEFAULT TRUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash CHAR(64) UNIQUE NOT NULL,
+      purpose VARCHAR(30) NOT NULL CHECK (purpose IN ('verify_email','reset_password')),
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS auth_tokens_user_purpose_idx ON auth_tokens(user_id, purpose);
+    CREATE INDEX IF NOT EXISTS auth_tokens_expires_idx ON auth_tokens(expires_at);
     CREATE TABLE IF NOT EXISTS sessions (
       id BIGSERIAL PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -188,17 +212,18 @@ async function initDatabase() {
     CREATE INDEX IF NOT EXISTS ai_usage_user_created_idx ON ai_usage(user_id, created_at);
   `);
   await pool.query('DELETE FROM sessions WHERE expires_at < NOW()');
+  await pool.query('DELETE FROM auth_tokens WHERE expires_at < NOW()');
   console.log('[DB] PostgreSQL initialized.');
 }
 
-async function createSession(userId, res) {
+async function createSession(userId, res, days = SESSION_DAYS_REMEMBER) {
   const token = randomToken();
   const tokenHash = hashToken(token);
   await pool.query(
     'INSERT INTO sessions(user_id, token_hash, expires_at) VALUES($1,$2,NOW()+($3 || \' days\')::interval)',
-    [userId, tokenHash, SESSION_DAYS]
+    [userId, tokenHash, days]
   );
-  res.setHeader('Set-Cookie', cookie('smart_nabd_session', token, SESSION_DAYS * 86400));
+  res.setHeader('Set-Cookie', cookie('smart_nabd_session', token, days * 86400));
 }
 
 async function currentUser(req) {
@@ -371,6 +396,44 @@ async function requireUser(req, res) {
   return user;
 }
 
+
+function appBaseUrl(req) {
+  return APP_BASE_URL || `https://${req.headers.host || 'smart-nabd.onrender.com'}`;
+}
+
+function makeAuthToken() {
+  const token = randomToken();
+  return { token, tokenHash: hashToken(token) };
+}
+
+async function sendAuthEmail(to, subject, html) {
+  if (!mailer) {
+    console.warn('[MAIL] SMTP is not configured; email could not be sent to', to);
+    throw authError('خدمة البريد الإلكتروني غير مهيأة على الخادم حاليًا.', 503);
+  }
+  await mailer.sendMail({ from: MAIL_FROM, to, subject, html });
+}
+
+function emailTemplate(title, intro, buttonText, buttonUrl, footer) {
+  return `<!doctype html><html lang="ar" dir="rtl"><body style="font-family:Arial,sans-serif;background:#f5f8fb;padding:30px;color:#1f2937"><div style="max-width:620px;margin:auto;background:#fff;border-radius:18px;padding:32px;box-shadow:0 8px 30px rgba(0,0,0,.08)"><h2 style="margin-top:0">نبض الذكي | Smart Nabd</h2><h3>${title}</h3><p>${intro}</p><p><a href="${buttonUrl}" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#0ea5a8;color:#fff;text-decoration:none">${buttonText}</a></p><p style="font-size:13px;color:#6b7280">${footer}</p></div></body></html>`;
+}
+
+async function issueVerificationEmail(req, user) {
+  const {token, tokenHash} = makeAuthToken();
+  await pool.query("DELETE FROM auth_tokens WHERE user_id=$1 AND purpose='verify_email'", [user.id]);
+  await pool.query("INSERT INTO auth_tokens(user_id,token_hash,purpose,expires_at) VALUES($1,$2,'verify_email',NOW()+($3 || ' hours')::interval)", [user.id, tokenHash, EMAIL_VERIFY_HOURS]);
+  const url = `${appBaseUrl(req)}/?verify=${encodeURIComponent(token)}`;
+  await sendAuthEmail(user.email, 'تأكيد بريدك الإلكتروني في نبض الذكي', emailTemplate('تأكيد البريد الإلكتروني', 'اضغط الزر لتأكيد بريدك الإلكتروني وتفعيل حسابك.', 'تأكيد البريد الإلكتروني', url, `الرابط صالح لمدة ${EMAIL_VERIFY_HOURS} ساعة.`));
+}
+
+async function issuePasswordResetEmail(req, user) {
+  const {token, tokenHash} = makeAuthToken();
+  await pool.query("DELETE FROM auth_tokens WHERE user_id=$1 AND purpose='reset_password'", [user.id]);
+  await pool.query("INSERT INTO auth_tokens(user_id,token_hash,purpose,expires_at) VALUES($1,$2,'reset_password',NOW()+($3 || ' minutes')::interval)", [user.id, tokenHash, PASSWORD_RESET_MINUTES]);
+  const url = `${appBaseUrl(req)}/?reset=${encodeURIComponent(token)}`;
+  await sendAuthEmail(user.email, 'إعادة تعيين كلمة مرور نبض الذكي', emailTemplate('إعادة تعيين كلمة المرور', 'طلبنا إعادة تعيين كلمة مرور حسابك. إذا كنت أنت، استخدم الزر التالي.', 'إعادة تعيين كلمة المرور', url, `الرابط صالح لمدة ${PASSWORD_RESET_MINUTES} دقيقة.`));
+}
+
 async function handleAuth(req, res, pathname) {
   if (!pool) return send(res, 503, { error: 'قاعدة البيانات غير مهيأة على الخادم بعد.' });
 
@@ -381,30 +444,35 @@ async function handleAuth(req, res, pathname) {
     if (!validEmail(email)) return send(res, 400, { error: 'أدخل بريدًا إلكترونيًا صحيحًا.' });
     if (password.length < 8) return send(res, 400, { error: 'كلمة المرور يجب أن تكون 8 أحرف على الأقل.' });
     if (password.length > 128) return send(res, 400, { error: 'كلمة المرور طويلة جدًا.' });
-
     const existing = await pool.query('SELECT id FROM users WHERE email=$1 LIMIT 1', [email]);
     if (existing.rowCount) return send(res, 409, { error: 'هذا البريد مستخدم بالفعل. سجّل الدخول بدلًا من إنشاء حساب جديد.' });
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await pool.query(
-      'INSERT INTO users(email,password_hash,plan) VALUES($1,$2,\'free\') RETURNING id,email,plan,created_at',
-      [email, passwordHash]
+      'INSERT INTO users(email,password_hash,plan,email_verified) VALUES($1,$2,\'free\',$3) RETURNING id,email,plan,email_verified,created_at',
+      [email, passwordHash, mailer ? false : true]
     );
-    await createSession(result.rows[0].id, res);
-    return send(res, 201, { ok: true, user: result.rows[0], usage: { used: 0, limit: FREE_DAILY_LIMIT, remaining: FREE_DAILY_LIMIT } });
+    const user = result.rows[0];
+    if (mailer) {
+      try { await issueVerificationEmail(req, user); }
+      catch (e) { await pool.query('DELETE FROM users WHERE id=$1', [user.id]); throw e; }
+    }
+    await createSession(user.id, res, body.rememberMe === false ? SESSION_DAYS_NORMAL : SESSION_DAYS_REMEMBER);
+    return send(res, 201, { ok: true, user, emailVerificationRequired: Boolean(mailer), usage: { used: 0, limit: FREE_DAILY_LIMIT, remaining: FREE_DAILY_LIMIT } });
   }
 
   if (req.method === 'POST' && pathname === '/api/auth/login') {
     const body = await readJson(req);
     const email = normalizeEmail(body.email);
     const password = String(body.password || '');
-    const result = await pool.query('SELECT id,email,password_hash,plan,created_at FROM users WHERE email=$1 LIMIT 1', [email]);
+    const result = await pool.query('SELECT id,email,password_hash,plan,email_verified,created_at FROM users WHERE email=$1 LIMIT 1', [email]);
     const user = result.rows[0];
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return send(res, 401, { error: 'البريد الإلكتروني أو كلمة المرور غير صحيحة.' });
     }
-    await createSession(user.id, res);
+    if (mailer && !user.email_verified) return send(res, 403, { error: 'يرجى تأكيد بريدك الإلكتروني أولًا. افحص بريدك أو اطلب إعادة إرسال رسالة التأكيد.', code: 'EMAIL_NOT_VERIFIED' });
+    await createSession(user.id, res, body.rememberMe === false ? SESSION_DAYS_NORMAL : SESSION_DAYS_REMEMBER);
     const usage = await usageInfo(user.id, user.plan);
-    return send(res, 200, { ok: true, user: { id: user.id, email: user.email, plan: user.plan, created_at: user.created_at }, usage });
+    return send(res, 200, { ok: true, user: { id: user.id, email: user.email, plan: user.plan, email_verified: user.email_verified, created_at: user.created_at }, usage });
   }
 
   if (req.method === 'POST' && pathname === '/api/auth/logout') {
@@ -416,8 +484,73 @@ async function handleAuth(req, res, pathname) {
   if (req.method === 'GET' && pathname === '/api/auth/me') {
     const user = await currentUser(req);
     if (!user) return send(res, 401, { error: 'غير مسجل الدخول.' });
+    if (mailer && user.email_verified === false) return send(res, 403, { error: 'يرجى تأكيد بريدك الإلكتروني أولًا.', code: 'EMAIL_NOT_VERIFIED' });
     const usage = await usageInfo(user.id, user.plan);
     return send(res, 200, { ok: true, user, usage });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/forgot-password') {
+    const body = await readJson(req);
+    const email = normalizeEmail(body.email);
+    if (!validEmail(email)) return send(res, 400, { error: 'أدخل بريدًا إلكترونيًا صحيحًا.' });
+    const result = await pool.query('SELECT id,email FROM users WHERE email=$1 LIMIT 1', [email]);
+    if (result.rowCount && mailer) await issuePasswordResetEmail(req, result.rows[0]);
+    return send(res, 200, { ok: true, message: 'إذا كان البريد مسجلًا، ستصلك رسالة لإعادة تعيين كلمة المرور.' });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/resend-verification') {
+    const body = await readJson(req);
+    const email = normalizeEmail(body.email);
+    const result = await pool.query('SELECT id,email,email_verified FROM users WHERE email=$1 LIMIT 1', [email]);
+    if (result.rowCount && mailer && !result.rows[0].email_verified) await issueVerificationEmail(req, result.rows[0]);
+    return send(res, 200, { ok: true, message: 'إذا كان الحساب يحتاج تأكيدًا، ستصلك رسالة جديدة.' });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/change-password') {
+    const user = await requireUser(req, res);
+    if (!user) return null;
+    const body = await readJson(req);
+    const currentPassword = String(body.currentPassword || '');
+    const newPassword = String(body.newPassword || '');
+    const result = await pool.query('SELECT password_hash FROM users WHERE id=$1', [user.id]);
+    if (!result.rowCount || !(await bcrypt.compare(currentPassword, result.rows[0].password_hash))) return send(res, 401, { error: 'كلمة المرور الحالية غير صحيحة.' });
+    if (newPassword.length < 8 || newPassword.length > 128) return send(res, 400, { error: 'كلمة المرور الجديدة يجب أن تكون بين 8 و128 حرفًا.' });
+    const hash = await bcrypt.hash(newPassword, 12);
+    await pool.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, user.id]);
+    await pool.query('DELETE FROM sessions WHERE user_id=$1', [user.id]);
+    await createSession(user.id, res, SESSION_DAYS_REMEMBER);
+    return send(res, 200, { ok: true, message: 'تم تغيير كلمة المرور بنجاح.' });
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/reset-password') {
+    const body = await readJson(req);
+    const token = String(body.token || '');
+    const newPassword = String(body.newPassword || '');
+    if (!token) return send(res, 400, { error: 'رابط إعادة التعيين غير صالح.' });
+    if (newPassword.length < 8 || newPassword.length > 128) return send(res, 400, { error: 'كلمة المرور الجديدة يجب أن تكون بين 8 و128 حرفًا.' });
+    const result = await pool.query("SELECT user_id FROM auth_tokens WHERE token_hash=$1 AND purpose='reset_password' AND expires_at>NOW() LIMIT 1", [hashToken(token)]);
+    if (!result.rowCount) return send(res, 400, { error: 'انتهت صلاحية رابط إعادة التعيين أو أنه غير صالح.' });
+    const userId = result.rows[0].user_id;
+    const hash = await bcrypt.hash(newPassword, 12);
+    await pool.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, userId]);
+    await pool.query('DELETE FROM auth_tokens WHERE user_id=$1 AND purpose=\'reset_password\'', [userId]);
+    await pool.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+    await createSession(userId, res, SESSION_DAYS_REMEMBER);
+    const userResult = await pool.query('SELECT id,email,plan,email_verified,created_at FROM users WHERE id=$1', [userId]);
+    const user = userResult.rows[0];
+    const usage = await usageInfo(userId, user.plan);
+    return send(res, 200, { ok: true, message: 'تم تعيين كلمة المرور الجديدة بنجاح.', user, usage });
+  }
+
+  if (req.method === 'GET' && pathname === '/api/auth/verify-email') {
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const token = url.searchParams.get('token') || '';
+    const result = await pool.query("SELECT user_id FROM auth_tokens WHERE token_hash=$1 AND purpose='verify_email' AND expires_at>NOW() LIMIT 1", [hashToken(token)]);
+    if (!result.rowCount) return send(res, 400, { error: 'رابط تأكيد البريد غير صالح أو منتهي الصلاحية.' });
+    const userId = result.rows[0].user_id;
+    await pool.query('UPDATE users SET email_verified=TRUE WHERE id=$1', [userId]);
+    await pool.query("DELETE FROM auth_tokens WHERE user_id=$1 AND purpose='verify_email'", [userId]);
+    return send(res, 200, { ok: true, message: 'تم تأكيد البريد الإلكتروني بنجاح.' });
   }
 
   return null;
@@ -477,7 +610,8 @@ async function router(req, res) {
       const ext = path.extname(filePath).toLowerCase();
       const types = {
         '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
-        '.json': 'application/json; charset=utf-8', '.xml': 'application/xml; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml'
+        '.json': 'application/json; charset=utf-8', '.xml': 'application/xml; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml'
       };
       res.writeHead(200, {
         'Content-Type': types[ext] || 'application/octet-stream',
