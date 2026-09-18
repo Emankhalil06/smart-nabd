@@ -12,7 +12,12 @@ const { Pool } = require('pg');
 
 const PORT = Number(process.env.PORT || 3000);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-const GEMINI_MODEL = 'gemini-3.6-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const GEMINI_FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || 'gemini-3.7-flash,gemini-3.5-flash')
+  .split(',').map(s => s.trim()).filter(Boolean)
+  .filter((model, index, arr) => model !== GEMINI_MODEL && arr.indexOf(model) === index);
+const GEMINI_MAX_RETRIES = Number(process.env.GEMINI_MAX_RETRIES || 3);
+const GEMINI_RETRY_BASE_MS = Number(process.env.GEMINI_RETRY_BASE_MS || 1200);
 const MAX_BODY_BYTES = 256 * 1024;
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT = Number(process.env.RATE_LIMIT_PER_MINUTE || 20);
@@ -237,15 +242,29 @@ async function consumeUsage(userId, plan, task) {
       await client.query('ROLLBACK');
       return { allowed: false, used, limit, remaining: 0 };
     }
-    await client.query('INSERT INTO ai_usage(user_id, task) VALUES($1,$2)', [userId, String(task || 'unknown').slice(0, 100)]);
+    const inserted = await client.query(
+      'INSERT INTO ai_usage(user_id, task) VALUES($1,$2) RETURNING id',
+      [userId, String(task || 'unknown').slice(0, 100)]
+    );
     await client.query('COMMIT');
-    return { allowed: true, used: used + 1, limit, remaining: Math.max(0, limit - used - 1) };
+    return {
+      allowed: true,
+      usageId: inserted.rows[0].id,
+      used: used + 1,
+      limit,
+      remaining: Math.max(0, limit - used - 1)
+    };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;
   } finally {
     client.release();
   }
+}
+
+async function refundUsage(usageId) {
+  if (!usageId || !pool) return;
+  await pool.query('DELETE FROM ai_usage WHERE id=$1', [usageId]);
 }
 
 function buildPrompt(task, data, language) {
@@ -263,33 +282,80 @@ function buildPrompt(task, data, language) {
   ].join('\n\n');
 }
 
-async function callGemini(prompt) {
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableGeminiError(status, message) {
+  const text = String(message || '').toLowerCase();
+  return status === 408 || status === 429 || status >= 500 ||
+    text.includes('high demand') ||
+    text.includes('temporarily unavailable') ||
+    text.includes('try again later') ||
+    text.includes('resource exhausted') ||
+    text.includes('unavailable');
+}
+
+async function callGeminiModel(prompt, model, maxRetries = GEMINI_MAX_RETRIES) {
   if (!GEMINI_API_KEY) throw authError('GEMINI_API_KEY غير مهيأ على الخادم.', 503);
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60000);
-  try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
-      signal: controller.signal
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = payload?.error?.message || 'Gemini API request failed.';
-      throw authError(message, response.status === 429 ? 429 : 502);
+
+  let lastError;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
+        signal: controller.signal
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = payload?.error?.message || 'Gemini API request failed.';
+        const error = authError(message, response.status === 429 ? 429 : response.status >= 500 ? 503 : 502);
+        error.retryable = isRetryableGeminiError(response.status, message);
+        throw error;
+      }
+      const text = (payload?.candidates || [])
+        .flatMap(c => c?.content?.parts || [])
+        .map(p => p?.text || '')
+        .join('')
+        .trim();
+      if (!text) throw authError('Gemini returned an empty response.', 502);
+      return { text, model };
+    } catch (error) {
+      lastError = error;
+      const retryable = error.name === 'AbortError' || error.retryable || isRetryableGeminiError(error.statusCode, error.message);
+      const hasRetryLeft = attempt < maxRetries - 1;
+      if (!retryable || !hasRetryLeft) break;
+      const delay = GEMINI_RETRY_BASE_MS * (2 ** attempt) + Math.floor(Math.random() * 500);
+      console.warn(`[Gemini] ${model} transient failure; retry ${attempt + 1}/${maxRetries - 1} in ${delay}ms: ${error.message}`);
+      await sleep(delay);
+    } finally {
+      clearTimeout(timer);
     }
-    const text = (payload?.candidates || [])
-      .flatMap(c => c?.content?.parts || [])
-      .map(p => p?.text || '')
-      .join('')
-      .trim();
-    if (!text) throw authError('Gemini returned an empty response.', 502);
-    return text;
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastError || authError('Gemini API request failed.', 502);
+}
+
+async function callGemini(prompt) {
+  const models = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS];
+  let lastError;
+  for (let index = 0; index < models.length; index++) {
+    const model = models[index];
+    try {
+      const result = await callGeminiModel(prompt, model, index === 0 ? GEMINI_MAX_RETRIES : Math.max(2, GEMINI_MAX_RETRIES - 1));
+      if (index > 0) console.warn(`[Gemini] Fallback model succeeded: ${model}`);
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.error(`[Gemini] ${model} failed: ${error.message}`);
+      if (!isRetryableGeminiError(error.statusCode, error.message) && error.name !== 'AbortError') break;
+    }
+  }
+  throw lastError || authError('Gemini API request failed.', 502);
 }
 
 async function requireUser(req, res) {
@@ -361,7 +427,7 @@ async function router(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
   if (req.method === 'GET' && url.pathname === '/health') {
-    return send(res, 200, { ok: true, aiConfigured: Boolean(GEMINI_API_KEY), databaseConfigured: Boolean(pool), model: GEMINI_MODEL });
+    return send(res, 200, { ok: true, aiConfigured: Boolean(GEMINI_API_KEY), databaseConfigured: Boolean(pool), model: GEMINI_MODEL, fallbackModels: GEMINI_FALLBACK_MODELS });
   }
 
   if (url.pathname.startsWith('/api/auth/')) {
@@ -385,8 +451,13 @@ async function router(req, res) {
         });
       }
       const prompt = buildPrompt(task, body.data || {}, body.language);
-      const text = await callGemini(prompt);
-      return send(res, 200, { ok: true, text, model: GEMINI_MODEL, usage });
+      try {
+        const result = await callGemini(prompt);
+        return send(res, 200, { ok: true, text: result.text, model: result.model, usage });
+      } catch (error) {
+        await refundUsage(usage.usageId).catch(refundError => console.error('[Usage refund]', refundError.message));
+        throw error;
+      }
     } catch (error) {
       const status = error.statusCode || 500;
       const publicMessage =
@@ -429,6 +500,7 @@ initDatabase().then(() => {
   server.listen(PORT, () => {
     console.log(`Smart Nabd running on http://localhost:${PORT}`);
     console.log(`Gemini model: ${GEMINI_MODEL}`);
+    console.log(`Gemini fallback models: ${GEMINI_FALLBACK_MODELS.join(', ') || 'none'}`);
     console.log(`Gemini key configured: ${Boolean(GEMINI_API_KEY)}`);
     console.log(`Database configured: ${Boolean(pool)}`);
   });
