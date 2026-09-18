@@ -1,40 +1,51 @@
-# Smart Nabd — Server-managed Gemini
+# Smart Nabd 2.0 — Accounts + PostgreSQL + Gemini
 
-تم تعديل الموقع بحيث لا يطلب من المستخدم أي Gemini API Key.
-المفتاح يبقى على الخادم فقط عبر `GEMINI_API_KEY`.
+This package keeps the existing Smart Nabd interface while adding:
 
-## التشغيل محليًا
+- Email/password registration and login.
+- Secure server-side password hashing with bcryptjs.
+- HttpOnly, SameSite session cookies.
+- PostgreSQL-backed users and sessions.
+- Free/Premium plan field ready for future billing integration.
+- Configurable daily AI limits (default: Free 10, Premium 100).
+- Server-side Gemini 3.6 Flash only; the Gemini key is never exposed to the browser.
+- Existing medical UI and AI workflows preserved.
+- Medical inputs are not written to PostgreSQL by this authentication layer; existing browser-local features remain local until a separate data-storage design is added.
 
-يتطلب Node.js 18 أو أحدث.
+## Required Render environment variables
 
-1. انسخ `.env.example` إلى `.env`.
-2. ضع مفتاح Gemini داخل `GEMINI_API_KEY`.
-3. شغّل:
-   `npm start`
-4. افتح:
-   `http://localhost:3000`
+On the `smart-nabd` web service, add:
 
-## النشر
+- `GEMINI_API_KEY` = your existing Gemini API key
+- `DATABASE_URL` = the **Internal Database URL** from `smart-nabd-db`
+- `NODE_ENV` = `production`
 
-ارفع المشروع إلى أي استضافة تدعم Node.js مثل Render أو Railway أو VPS.
-ضع متغيرات البيئة من لوحة الاستضافة بدل وضع المفتاح داخل الملفات.
+Optional:
 
-المتغيرات:
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL=gemini-3.6-flash`
+- `FREE_DAILY_LIMIT=10`
+- `PREMIUM_DAILY_LIMIT=100`
 - `RATE_LIMIT_PER_MINUTE=20`
-- `PORT` (تضبطه الاستضافة عادةً)
+- `SESSION_DAYS=30`
+- `DATABASE_SSL=false` for Render internal PostgreSQL unless your database setup specifically requires SSL.
 
-## مهم للإنتاج
+## Database
 
-هذا التعديل يثبت اتصال Gemini مركزيًا، لكنه لا يضيف بعد نظام حسابات/اشتراكات/دفع أو قاعدة بيانات.
-لإطلاق خدمة تجارية فعلية متعددة المستخدمين، أضف:
-- تسجيل دخول وحسابات مستخدمين
-- حصص استخدام لكل خطة
-- قاعدة بيانات
-- بوابة دفع
-- سجلات استخدام وفواتير
-- حماية وامتثال مناسبين لبيانات الصحة
-- مراقبة وأمن الخادم
+The server automatically creates these tables on startup:
 
-لا تضع مفتاح Gemini في `index.html` أو JavaScript أو Git.
+- `users`
+- `sessions`
+- `ai_usage`
+
+No manual SQL migration is required for the first deployment.
+
+## Deploy
+
+1. Replace the old `index.html`, `server.js`, `package.json`, `.env.example`, `.gitignore`, and `README.md` in the GitHub repository with this package.
+2. Add `DATABASE_URL` to the Render service using the internal PostgreSQL URL.
+3. Keep the existing `GEMINI_API_KEY` secret on Render.
+4. Commit/push to `main` and wait for Render to redeploy.
+5. Open the live site and create a test account.
+
+## Important production note
+
+The current database is suitable for testing. Render's Free PostgreSQL databases have a limited lifetime according to the current Render plan. Before a real commercial launch, use a persistent paid database and complete privacy, security, medical-data governance, Terms, and billing work.

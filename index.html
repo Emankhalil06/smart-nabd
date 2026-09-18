@@ -196,6 +196,28 @@ footer{text-align:center;padding:25px;color:#64748b;font-size:13px}
 .gemini-loading{display:inline-flex;align-items:center;gap:7px;font-weight:800}
 .gemini-error{color:#991b1b;background:#fff1f2;border:1px solid #fecdd3;border-radius:10px;padding:10px;margin-top:10px}
 .ai-output{white-space:pre-wrap;word-break:break-word}
+
+.auth-overlay{position:fixed;inset:0;background:rgba(7,89,133,.22);backdrop-filter:blur(7px);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+.auth-card{width:min(460px,100%);background:#fff;border-radius:28px;padding:28px;box-shadow:0 25px 80px rgba(7,89,133,.28);border:1px solid #bae6fd}
+.auth-brand{text-align:center;color:var(--deep);font-size:28px;font-weight:900;margin-bottom:8px}
+.auth-sub{text-align:center;color:var(--muted);line-height:1.7;margin:0 0 22px}
+.auth-tabs{display:grid;grid-template-columns:1fr 1fr;background:#f0f9ff;border-radius:14px;padding:4px;gap:4px;margin-bottom:18px}
+.auth-tab{border:0;background:transparent;border-radius:10px;padding:11px;cursor:pointer;font-weight:800;color:#475569}
+.auth-tab.active{background:#fff;color:var(--deep);box-shadow:0 3px 12px rgba(7,89,133,.10)}
+.auth-form{display:grid;gap:14px}
+.auth-form .field{gap:7px}
+.auth-form input{direction:ltr;text-align:left}
+.auth-error{min-height:20px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:9px;display:none;line-height:1.6}
+.auth-error.show{display:block}
+.auth-submit{width:100%;margin-top:3px}
+.auth-note{text-align:center;font-size:12px;color:#64748b;line-height:1.7;margin:16px 0 0}
+.account-bar{align-items:center;gap:8px;flex-wrap:wrap}
+.account-email{font-size:13px;font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plan-badge,.usage-badge{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.35);padding:7px 10px;border-radius:999px;font-size:12px;font-weight:800}
+.logout-btn{background:#fff;color:var(--deep);border:0;border-radius:999px;padding:8px 12px;cursor:pointer;font-weight:800}
+.account-summary{margin-inline-start:auto;background:#f0f9ff;color:var(--deep);padding:10px 14px;border-radius:12px;font-weight:800}
+body.auth-locked{overflow:hidden}
+@media(max-width:760px){.account-email{max-width:130px}.account-summary{width:100%;margin:0}.header-actions{justify-content:flex-end}}
 </style>
 
 <style id="nabd-role-order-fix">
@@ -264,12 +286,6 @@ footer{text-align:center;padding:25px;color:#64748b;font-size:13px}
     flex: 0 0 auto;
   }
   .ai-under-text { flex: 1; }
-.ai-connection-badge{
-  display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  background:#ecfdf5;color:#166534;border:1px solid #bbf7d0;
-  border-radius:999px;padding:9px 14px;font-weight:800;white-space:nowrap;
-}
-
   .ai-under-text h3 { margin: 0 0 4px; }
   .ai-under-text p { margin: 0; opacity: .75; }
   .ai-under-btn { flex: 0 0 auto; }
@@ -286,14 +302,36 @@ footer{text-align:center;padding:25px;color:#64748b;font-size:13px}
 </head>
 <body>
 
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <div class="auth-brand">نبض الذكي | Smart Nabd</div>
+    <p class="auth-sub" id="authSub">أنشئ حسابك أو سجّل الدخول لاستخدام أدوات الذكاء الاصطناعي.</p>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="loginTab" type="button" onclick="showAuthMode('login')">تسجيل الدخول</button>
+      <button class="auth-tab" id="registerTab" type="button" onclick="showAuthMode('register')">إنشاء حساب</button>
+    </div>
+    <form class="auth-form" id="authForm" onsubmit="submitAuth(event)">
+      <div class="field"><label for="authEmail" id="authEmailLabel">البريد الإلكتروني</label><input id="authEmail" type="email" autocomplete="email" required placeholder="name@example.com"></div>
+      <div class="field"><label for="authPassword" id="authPasswordLabel">كلمة المرور</label><input id="authPassword" type="password" autocomplete="current-password" minlength="8" required placeholder="8 أحرف على الأقل"></div>
+      <div class="auth-error" id="authError"></div>
+      <button class="primary auth-submit" id="authSubmit" type="submit">تسجيل الدخول</button>
+    </form>
+    <p class="auth-note" id="authNote">حسابك يحمي الوصول إلى ميزات الذكاء الاصطناعي. لا يتم تخزين مفتاح Gemini في المتصفح.</p>
+  </div>
+</div>
+
 <header>
   <div class="brand">نبض الذكي | Smart Nabd</div>
   <div class="header-actions">
-    <span class="ai-connection-badge" id="aiConnectionStatus">🟢 الذكاء الاصطناعي متصل</span>
+    <div class="account-bar hidden" id="accountBar">
+      <span class="account-email" id="accountEmail"></span>
+      <span class="plan-badge" id="planBadge"></span>
+      <span class="usage-badge" id="usageBadge"></span>
+      <button class="logout-btn" id="logoutBtn" onclick="logoutAccount()">تسجيل الخروج</button>
+    </div>
     <button class="lang" onclick="toggleLanguage()">English / العربية</button>
   </div>
 </header>
-
 
 
 <main class="container">
@@ -327,17 +365,17 @@ footer{text-align:center;padding:25px;color:#64748b;font-size:13px}
     </section>
 
   
-  <section class="ai-under-roles" aria-label="حالة الذكاء الاصطناعي">
+  <section class="ai-under-roles" aria-label="الحساب والاشتراك">
     <div class="ai-under-icon">🤖</div>
     <div class="ai-under-text">
-      <h3>الذكاء الاصطناعي متصل تلقائيًا</h3>
-      <p>يتم تشغيل Gemini من الخادم بشكل مركزي؛ لا يحتاج المستخدم إلى إدخال أي API Key.</p>
+      <h3>حسابك في نبض الذكي</h3>
+      <p>الذكاء الاصطناعي يعمل من الخادم بأمان، ومفتاح Gemini لا يظهر للمستخدمين.</p>
     </div>
-    <span class="ai-connection-badge" id="aiConnectionStatusPanel">🟢 متصل</span>
+    <div class="account-summary" id="accountSummary">سجّل الدخول للبدء</div>
   </section>
 
 <section class="panel active" id="welcomePanel" style="display:block;margin-top:0">
-    <div class="panel-title"><h2>✨ أدوات سريعة</h2><span class="status">AI متصل بالخادم</span></div>
+    <div class="panel-title"><h2>✨ أدوات سريعة</h2><span class="status">نموذج أولي</span></div>
     <div class="quick-actions">
       <button class="secondary" onclick="openRole('patient')">🩺 دخول كمريض</button>
       <button class="secondary" onclick="openRole('nurse')">👩‍⚕️ دخول كممرض</button>
@@ -766,7 +804,7 @@ footer{text-align:center;padding:25px;color:#64748b;font-size:13px}
   </section>
 </main>
 
-<footer>© Smart Nabd — Prototype UI | نموذج أولي لواجهة تطبيق صحي</footer>
+<footer>© Smart Nabd — Health Application | تطبيق صحي رقمي</footer>
 
 <script>
 let english=false;
@@ -1235,101 +1273,6 @@ function speakText(text){
 function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 
 
-const aiModels={
-  openai:[
-    ['gpt-5','GPT-5'],
-    ['gpt-4o','GPT-4o']
-  ],
-  gemini:[
-    ['gemini-2.5-pro','Gemini 2.5 Pro'],
-    ['gemini-3.6-flash','Gemini 3.6 Flash (موصى به حاليًا)'],
-    ['gemini-2.5-flash','Gemini 2.5 Flash (قد لا يتاح لبعض المفاتيح الجديدة)']
-  ],
-  claude:[
-    ['claude-sonnet-4','Claude Sonnet 4']
-  ],
-  custom:[
-    ['custom-model','Custom Model']
-  ]
-};
-
-
-/* =========================
-   Server-managed Google Gemini bridge
-   The API key NEVER lives in the browser.
-   ========================= */
-const GEMINI_API_PATH = '/api/gemini';
-
-function geminiResultBox(id, text, state='result'){
-  const box=document.getElementById(id);
-  if(!box) return;
-  box.classList.remove('hidden');
-  box.classList.remove('gemini-error');
-  if(state==='loading'){
-    box.innerHTML='<span class="gemini-loading">⏳ جاري التحليل...</span>';
-  }else if(state==='error'){
-    box.classList.add('gemini-error');
-    box.innerHTML='<strong>❌ خطأ:</strong><br>'+escapeHtml(text);
-  }else{
-    box.innerHTML='<strong>🤖 نتيجة Gemini:</strong><div class="ai-output">'+escapeHtml(text)+'</div>';
-  }
-  box.scrollIntoView({behavior:'smooth',block:'nearest'});
-}
-
-function setAIConnectionStatus(ok, text){
-  const ids=['aiConnectionStatus','aiConnectionStatusPanel'];
-  ids.forEach(id=>{
-    const el=document.getElementById(id);
-    if(!el) return;
-    el.textContent=ok ? '🟢 '+text : '🔴 '+text;
-    el.style.background=ok?'#ecfdf5':'#fef2f2';
-    el.style.color=ok?'#166534':'#991b1b';
-    el.style.borderColor=ok?'#bbf7d0':'#fecaca';
-  });
-}
-
-async function checkAIConnection(){
-  try{
-    const response=await fetch('/health',{credentials:'same-origin'});
-    const payload=await response.json().catch(()=>({}));
-    if(!response.ok || !payload.aiConfigured){
-      setAIConnectionStatus(false,'الذكاء الاصطناعي غير مهيأ');
-      return false;
-    }
-    setAIConnectionStatus(true,'الذكاء الاصطناعي متصل');
-    return true;
-  }catch(_){
-    setAIConnectionStatus(false,'تعذر الاتصال بالخادم');
-    return false;
-  }
-}
-
-async function callGemini(task, data, resultId){
-  geminiResultBox(resultId,'','loading');
-  try{
-    const response=await fetch(GEMINI_API_PATH+'/analyze',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      credentials:'same-origin',
-      body:JSON.stringify({task,data,language:english?'en':'ar'})
-    });
-    const payload=await response.json().catch(()=>({}));
-    if(!response.ok){
-      throw new Error(payload.error||'تعذر الاتصال بخادم الذكاء الاصطناعي.');
-    }
-    if(!payload.text) throw new Error('عاد رد فارغ من Gemini.');
-    geminiResultBox(resultId,payload.text,'result');
-    setAIConnectionStatus(true,'الذكاء الاصطناعي متصل');
-    return payload.text;
-  }catch(error){
-    geminiResultBox(resultId,error.message||'حدث خطأ غير معروف.','error');
-    if(/الخادم|الاتصال|AI|Gemini|API/i.test(error.message||'')) setAIConnectionStatus(false,'مشكلة في الاتصال');
-    return null;
-  }
-}
-
-document.addEventListener('DOMContentLoaded', checkAIConnection);
-
 /* Doctor: send all requested clinical fields to Gemini. */
 window.doctorSupport = async function doctorSupport(){
   const d=getDoctorCaseData();
@@ -1456,14 +1399,138 @@ window.reviewDoseInfo = async function reviewDoseInfo(){
 }
 
 /* =========================
+   Real Google Gemini bridge
+   ========================= */
+const GEMINI_API_PATH = '/api/gemini';
+
+function geminiResultBox(id, text, state='result'){
+  const box=document.getElementById(id);
+  if(!box) return;
+  box.classList.remove('hidden');
+  box.classList.remove('gemini-error');
+  if(state==='loading'){
+    box.innerHTML='<span class="gemini-loading">⏳ جاري التحليل...</span>';
+  }else if(state==='error'){
+    box.classList.add('gemini-error');
+    box.innerHTML='<strong>❌ خطأ:</strong><br>'+escapeHtml(text);
+  }else{
+    box.innerHTML='<strong>🤖 نتيجة Gemini:</strong><div class="ai-output">'+escapeHtml(text)+'</div>';
+  }
+  box.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+async function callGemini(task,data,resultId){
+  geminiResultBox(resultId,'','loading');
+  try{
+    const response=await fetch(GEMINI_API_PATH+'/analyze',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({task,data,model:'gemini-3.6-flash',language:english?'en':'ar'})
+    });
+    const payload=await response.json().catch(()=>({}));
+    if(!response.ok){
+      if(response.status===401){ lockApp(); }
+      throw new Error(payload.error||'تعذر الاتصال بخادم Gemini.');
+    }
+    if(!payload.text) throw new Error('عاد رد فارغ من Gemini.');
+    geminiResultBox(resultId,payload.text,'result');
+    if(payload.usage) updateUsage(payload.usage);
+    return payload.text;
+  }catch(error){
+    geminiResultBox(resultId,error.message||'حدث خطأ غير معروف.','error');
+    return null;
+  }
+}
+
+/* =========================
+   Account authentication
+   ========================= */
+let authMode='login';
+let currentAccount=null;
+
+function showAuthError(message){
+  const box=document.getElementById('authError');
+  box.textContent=message||'';
+  box.classList.toggle('show',Boolean(message));
+}
+function setAuthLoading(loading){
+  const btn=document.getElementById('authSubmit');
+  btn.disabled=loading;
+  btn.textContent=loading ? (english?'Please wait...':'⏳ يرجى الانتظار...') : (authMode==='login' ? (english?'Log in':'تسجيل الدخول') : (english?'Create account':'إنشاء حساب'));
+}
+function showAuthMode(mode){
+  authMode=mode;
+  document.getElementById('loginTab').classList.toggle('active',mode==='login');
+  document.getElementById('registerTab').classList.toggle('active',mode==='register');
+  document.getElementById('authPassword').setAttribute('autocomplete',mode==='login'?'current-password':'new-password');
+  document.getElementById('authSubmit').textContent=mode==='login' ? (english?'Log in':'تسجيل الدخول') : (english?'Create account':'إنشاء حساب');
+  showAuthError('');
+}
+function updateUsage(usage){
+  if(!usage) return;
+  const text=english ? `AI today: ${usage.used}/${usage.limit}` : `AI اليوم: ${usage.used}/${usage.limit}`;
+  const badge=document.getElementById('usageBadge'); if(badge) badge.textContent=text;
+  const summary=document.getElementById('accountSummary'); if(summary) summary.textContent=english ? `Daily AI usage: ${usage.used}/${usage.limit}` : `استخدام AI اليومي: ${usage.used}/${usage.limit}`;
+}
+function updateAccountUI(){
+  const bar=document.getElementById('accountBar');
+  const email=document.getElementById('accountEmail');
+  const plan=document.getElementById('planBadge');
+  if(!currentAccount){ bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden'); bar.style.display='flex';
+  email.textContent=currentAccount.email;
+  plan.textContent=currentAccount.plan==='premium' ? (english?'Premium':'Premium') : (english?'Free':'مجاني');
+  document.getElementById('accountSummary').textContent=english?'Signed in':'تم تسجيل الدخول';
+}
+function lockApp(){
+  document.body.classList.add('auth-locked');
+  document.getElementById('authOverlay').style.display='flex';
+  updateAccountUI();
+}
+function unlockApp(user,usage){
+  currentAccount=user; updateAccountUI(); updateUsage(usage);
+  document.body.classList.remove('auth-locked');
+  document.getElementById('authOverlay').style.display='none';
+}
+async function authRequest(url,body){
+  const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(body)});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error(payload.error||'تعذر تنفيذ العملية.');
+  return payload;
+}
+async function submitAuth(event){
+  event.preventDefault(); showAuthError(''); setAuthLoading(true);
+  try{
+    const email=document.getElementById('authEmail').value.trim();
+    const password=document.getElementById('authPassword').value;
+    const payload=await authRequest(authMode==='login'?'/api/auth/login':'/api/auth/register',{email,password});
+    unlockApp(payload.user,payload.usage);
+  }catch(error){ showAuthError(error.message); }
+  finally{ setAuthLoading(false); }
+}
+async function logoutAccount(){
+  try{await authRequest('/api/auth/logout',{});}catch(_){ }
+  currentAccount=null; lockApp(); document.getElementById('authPassword').value='';
+}
+async function initAuth(){
+  try{
+    const response=await fetch('/api/auth/me',{credentials:'same-origin'});
+    const payload=await response.json().catch(()=>({}));
+    if(response.ok) unlockApp(payload.user,payload.usage);
+    else lockApp();
+  }catch(_){
+    lockApp();
+    showAuthError(english?'Could not reach the authentication server.':'تعذر الاتصال بخادم الحسابات.');
+  }
+}
+
+/* =========================
    Full Arabic/English UI language layer
    ========================= */
 const NABD_I18N = {
   'نبض الذكي | Smart Nabd':'Smart Nabd | نبض الذكي',
   'English / العربية':'العربية / English',
-  '🔑 إعداد مفتاح API':'🔑 API Key Settings',
-  'أدخل مفتاح Google Gemini ليتم اختباره فعليًا عبر الخادم. لا يتم حفظ المفتاح في المتصفح أو localStorage.':'Enter your Google Gemini API key. It will be tested through the server. The key is not stored in the browser or localStorage.',
-  'اختر النموذج':'Select model', '(اختياري)':'(Optional)', 'حفظ الإعدادات':'Save Settings','مسح':'Clear',
   'أمان: المفتاح لا يُحفظ في index.html أو JavaScript أو localStorage. عند الحفظ يُختبر عبر server.js ويُستخدم من جهة الخادم فقط. للاستخدام المستمر يوصى بتعيين GEMINI_API_KEY على الخادم.':'Security: the key is never stored in index.html, JavaScript, or localStorage. When saved, it is tested through server.js and used only on the server. For persistent use, set GEMINI_API_KEY on the server.',
   'نبض الذكي':'Smart Nabd',
   'مساعد صحي رقمي يقدّم إرشادًا أوليًا واضحًا مع تصميم يراعي سهولة الاستخدام والوصول.':'A digital health assistant providing clear initial guidance with an accessible, user-friendly design.',
@@ -1471,7 +1538,6 @@ const NABD_I18N = {
   'الممرض':'Nurse','ممرض':'Nurse','فرز، علامات حيوية، ملاحظات':'Triage, vital signs, notes',
   'الطبيب':'Doctor','طبيب':'Doctor','حالة سريرية، ملخص، ملاحظات':'Clinical case, summary, notes',
   'الصيدلاني':'Pharmacist','صيدلاني':'Pharmacist','إدارة الأدوية والتداخلات والحساسية والمواعيد':'Medication, interactions, allergies and schedules',
-  'إعدادات الذكاء الاصطناعي':'AI Settings','المفتاح ومزود الذكاء الاصطناعي والنموذج':'API key, AI provider and model','⚙️ فتح إعدادات AI':'⚙️ Open AI Settings',
   '✨ أدوات سريعة':'✨ Quick Tools','نموذج أولي':'Prototype','🩺 دخول كمريض':'🩺 Enter as Patient','👩‍⚕️ دخول كممرض':'👩‍⚕️ Enter as Nurse','👨‍⚕️ دخول كطبيب':'👨‍⚕️ Enter as Doctor','💊 دخول كصيدلاني':'💊 Enter as Pharmacist',
   'المزايا المضافة حاليًا هي واجهات وتجهيزات أولية. عند معرفة مزود الـAPI من المدرب، نربط وظائف التحليل الفعلية بالنموذج المناسب.':'The current features are interface prototypes and initial wiring. Once the API provider is configured, analysis functions can use the appropriate model.',
   'واجهة المريض':'Patient Interface','خصوصية: لا يتم حفظ البيانات في هذا النموذج التجريبي':'Privacy: data is not stored in this prototype',
@@ -1492,7 +1558,7 @@ const NABD_I18N = {
   '💊 واجهة الصيدلاني':'💊 Pharmacist Interface','مراجعة الأدوية، التداخلات، الأسماء العلمية والتجارية، المادة الفعالة، الحساسية، البدائل ومواعيد إعطاء الدواء.':'Medication review, interactions, generic and brand names, active ingredients, allergies, alternatives, and administration schedules.','🔎 معلومات الدواء':'🔎 Medication Information','اسم الدواء':'Medication Name','المادة الفعالة':'Active Ingredient','الاسم العلمي':'Generic Name','الاسم التجاري':'Brand Name','التركيز والشكل الدوائي':'Strength & Dosage Form','طريق الإعطاء':'Route of Administration','اختر':'Select','فموي':'Oral','وريدي':'IV','عضلي':'IM','موضعي':'Topical','استنشاق':'Inhaled','أخرى':'Other','الآثار الجانبية والتحذيرات':'Side Effects & Warnings','🔍 مراجعة الدواء':'🔍 Review Medication','🔁 البديل بنفس الاسم العلمي':'🔁 Alternative with Same Active Ingredient','البحث يكون حسب المادة الفعالة، مع مطابقة التركيز والشكل وطريق الإعطاء قبل اعتماد البديل.':'Search by active ingredient and match strength, dosage form, and route before considering an alternative.','المادة الفعالة / الاسم العلمي':'Active Ingredient / Generic Name','الاسم التجاري الحالي':'Current Brand Name','التركيز':'Strength','السوق/البلد':'Market/Country','🔄 بحث عن البدائل':'🔄 Find Alternatives','⚠️ التداخلات الدوائية المتعارضة':'⚠️ Drug Interactions','أدوية المريض':'Patient Medications','⚠️ فحص التداخلات':'⚠️ Check Interactions','⏰ تحديد موعد إعطاء الدواء':'⏰ Schedule Medication','الدواء':'Medication','الجرعة الموصوفة':'Prescribed Dose','الموعد':'Time','ملاحظة':'Note','🔔 إضافة الموعد':'🔔 Add Schedule','🚨 الحساسية الدوائية':'🚨 Drug Allergy','الدواء / المادة':'Medication / Substance','نوع التحسس':'Reaction Type','طفح/حكة':'Rash/Itching','تورم':'Swelling','ضيق تنفس':'Shortness of Breath','تفاعل شديد موثق':'Documented Severe Reaction','غير معروف':'Unknown','تفاصيل التفاعل السابق':'Previous Reaction Details','بديل للمراجعة':'Alternative for Review','🚨 تسجيل الحساسية':'🚨 Record Allergy','👶🧑 المادة الفعالة والآثار والجرعات':'👶🧑 Active Ingredient, Effects & Doses','اسم الدواء / المادة الفعالة':'Medication / Active Ingredient','الفئة':'Age Group','طفل':'Child','بالغ':'Adult','كبير سن':'Older Adult','الوزن kg إذا كان مطلوبًا':'Weight in kg if required','تركيز المستحضر':'Product Strength','بيانات الجرعة من مرجع دوائي موثوق':'Dose data from a trusted drug reference','📋 تجهيز مراجعة الجرعة':'📋 Prepare Dose Review','💊 الأدوية المسجلة للمراجعة':'💊 Medications Saved for Review','تنبيه: هذه واجهة تعليمية/تنظيمية وليست مرجعًا دوائيًا مستقلًا. لا يتم تخمين الجرعات أو اعتماد بديل تلقائيًا؛ يجب التحقق من المادة الفعالة والتركيز والشكل وطريق الإعطاء والحساسية والرجوع إلى الصيدلاني/الطبيب ومراجع دوائية موثوقة.':'Notice: this is an educational/organizational interface, not an independent drug reference. Doses are never guessed and alternatives are not automatically approved. Verify the active ingredient, strength, form, route, allergies, and consult a pharmacist/doctor and trusted drug references.',
   '👨‍⚕️ واجهة الطبيب':'👨‍⚕️ Doctor Interface','يبدأ الطبيب باختيار تخصصه ثم يجمع المعلومات السريرية الأساسية، لتجهيز حالة منظمة يمكن تحليلها بواسطة نظام AI طبي موثوق.':'The doctor selects a specialty and collects core clinical information to prepare an organized case for review by a trusted medical AI system.',
   '🩺 1) تخصص الطبيب':'🩺 1) Doctor Specialty','التخصص':'Specialty','اختر التخصص':'Select specialty','طب باطني':'Internal Medicine','عظام ومفاصل':'Orthopedics','قلب وأوعية دموية':'Cardiology','أطفال':'Pediatrics','نساء وولادة':'Obstetrics & Gynecology','جلدية':'Dermatology','أنف وأذن وحنجرة':'ENT','عيون':'Ophthalmology','جراحة عامة':'General Surgery','أعصاب':'Neurology','طب أسرة':'Family Medicine','طوارئ':'Emergency Medicine','عمر المريض':'Patient Age','الجنس':'Sex','ذكر':'Male','أنثى':'Female','غير محدد':'Not specified','أمراض مزمنة / تاريخ مرضي مهم':'Chronic Diseases / Relevant History','الأدوية والحساسيات':'Medications & Allergies','📋 2) أسئلة سريرية موجهة':'📋 2) Guided Clinical Questions','1. متى بدأت الأعراض؟':'1. When did the symptoms start?','فجأة':'Suddenly','تدريجيًا':'Gradually','2. كيف تطورت الأعراض؟':'2. How have the symptoms progressed?','زادت':'Worsened','خفّت':'Improved','ثابتة':'Stable','تأتي وتختفي':'Intermittent','3. مكان الألم؟ وهل ينتشر إلى منطقة أخرى؟':'3. Where is the pain? Does it radiate elsewhere?','4. هل توجد أعراض مصاحبة؟':'4. Are there associated symptoms?','5. تفاصيل الحالة السريرية / الفحص / نتائج المختبر':'5. Clinical / examination / laboratory details','🧠 تجهيز الحالة لتحليل AI':'🧠 Prepare Case for AI Analysis','مسح البيانات':'Clear Data','🧰 أدوات الطبيب':'🧰 Doctor Tools','ينظم تخصص الطبيب ومعلومات المريض والأسئلة السريرية في ملخص واحد واضح.':'Organizes the doctor’s specialty, patient information, and clinical questions into one clear summary.','تلخيص الحالة':'Summarize Case','يجهز البيانات لإرسالها إلى نموذج AI طبي موثوق لاقتراح احتمالات تحتاج مراجعة الطبيب، دون استبدال القرار السريري.':'Prepares the data for a trusted medical AI model to suggest possibilities for physician review without replacing clinical judgment.','تحضير التحليل':'Prepare Analysis','يحوّل المعلومات المدخلة إلى مسودة ملاحظة سريرية منظمة قابلة للمراجعة.':'Turns the entered information into an organized clinical note draft for review.','إنشاء مسودة':'Create Draft','واجهة مخصصة لمراجعة الأدوية عند ربطها بمصدر دوائي موثوق.':'A dedicated interface for medication review when connected to a trusted drug source.','جاهزة للربط بمصدر موثوق':'Ready for Trusted Source','مكان لعرض الأدلة والمراجع الطبية الموثوقة التي تدعم التحليل بدل الاعتماد على AI وحده.':'A place to display trusted medical evidence and references supporting the analysis rather than relying on AI alone.','ميزة مستقبلية':'Future Feature','تنظيم نتائج المختبر وإبراز القيم التي تحتاج مراجعة وفق النطاقات المرجعية المدخلة.':'Organizes laboratory results and highlights values that need review against the entered reference ranges.','تنظيم النتائج':'Organize Results','تنبيه: هذه واجهة نموذج أولي وليست أداة تشخيص طبي. في النسخة الإنتاجية يجب استخدام نموذج AI طبي مُراجع، ومصادر سريرية موثوقة، وحماية بيانات المرضى، مع بقاء القرار النهائي للطبيب.':'Notice: this is a prototype interface, not a diagnostic tool. A production version should use a reviewed medical AI model, trusted clinical sources, patient-data protection, and physician final judgment.',
-  '© Smart Nabd — Prototype UI | نموذج أولي لواجهة تطبيق صحي':'© Smart Nabd — Prototype UI | Health Application Prototype',
+  '© Smart Nabd — Health Application | تطبيق صحي رقمي':'© Smart Nabd — Prototype UI | Health Application Prototype',
   'تم اختيار الملف. لا يتم رفعه في هذا النموذج.':'File selected. It is not uploaded in this prototype.',
   'الإدخال الصوتي غير مدعوم في هذا المتصفح.':'Voice input is not supported in this browser.',
   'لا توجد ملاحظة مدخلة':'No note entered','غير مدخلة':'Not entered','لا توجد':'None','غير محدد':'Not specified','حسب الوصفة':'As prescribed','لم يُدخل':'Not entered',
@@ -1584,6 +1650,8 @@ function translatePage(lang=english?'en':'ar'){
   document.title=lang==='en'?'Smart Nabd':'نبض الذكي';
   const btn=document.querySelector('.lang'); if(btn) btn.textContent=lang==='en'?'العربية / English':'English / العربية';
   try{localStorage.setItem('smartNabdLanguage',lang)}catch(e){}
+  if(typeof updateAccountUI==='function') updateAccountUI();
+  if(typeof showAuthMode==='function') showAuthMode(authMode);
 }
 
 const nabdObserver = new MutationObserver(mutations=>{
@@ -1611,6 +1679,8 @@ function toggleLanguage(){setLanguage(english?'ar':'en');}
 const nativeAlert=window.alert.bind(window), nativeConfirm=window.confirm.bind(window);
 window.alert=(msg)=>nativeAlert(english?(NABD_I18N[String(msg)]||String(msg)):String(msg));
 window.confirm=(msg)=>nativeConfirm(english?(NABD_I18N[String(msg)]||String(msg)):String(msg));
+
+document.addEventListener('DOMContentLoaded', initAuth);
 
 nabdObserver.observe(document.body,{childList:true,subtree:true});
 document.addEventListener('DOMContentLoaded',()=>{

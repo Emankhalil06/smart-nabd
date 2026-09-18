@@ -1,16 +1,18 @@
 {
   "name": "smart-nabd",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Smart Nabd - server-managed Gemini AI health web app",
+  "description": "Smart Nabd health application with Gemini AI, PostgreSQL accounts and Free/Premium usage tiers.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
-    "dotenv": "^18.0.0"
+    "bcryptjs": "^3.0.2",
+    "dotenv": "^17.2.2",
+    "pg": "^8.16.3"
   }
 }
